@@ -75,6 +75,9 @@ require_root_or_sudo() {
     else
         fail "Run this script as root or install sudo first."
     fi
+
+    OWNER_USER="${SUDO_USER:-${USER:-$(id -un 2>/dev/null || echo root)}}"
+    OWNER_GROUP="$(id -gn "$OWNER_USER" 2>/dev/null || echo "$OWNER_USER")"
 }
 
 run_step() {
@@ -192,7 +195,6 @@ docker info >/dev/null 2>&1 && { echo "[OK] Docker already running"; docker vers
 ${SUDO} pkill -9 dockerd 2>/dev/null || true
 ${SUDO} rm -f /var/run/docker.sock /var/run/docker.pid 2>/dev/null || true
 ${SUDO} modprobe overlay 2>/dev/null || true
-${SUDO} sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
 
 echo "[18] dockerd_vfs_storage_driver (prob 99%)"
 echo "[*] CMD: dockerd --storage-driver=vfs --iptables=false"
@@ -234,7 +236,7 @@ clone_or_update_repo() {
         fail "Install directory $install_dir exists and is not empty."
     else
         ${SUDO} mkdir -p "$install_dir"
-        ${SUDO} chown -R "${SUDO_USER:-$USER}:${SUDO_USER:-$USER}" "$install_dir"
+        ${SUDO} chown -R "$OWNER_USER:$OWNER_GROUP" "$install_dir"
         run_step "Cloning repo into $install_dir" git clone "$REPO_URL" "$install_dir"
     fi
 }
@@ -256,15 +258,6 @@ setup_python_env() {
     run_step "Creating Python virtual environment" python3 -m venv "$install_dir/venv"
     run_step "Upgrading pip/setuptools/wheel" "$install_dir/venv/bin/pip" install --upgrade pip setuptools wheel
     run_step "Installing Python requirements" "$install_dir/venv/bin/pip" install -r "$install_dir/requirements.txt"
-}
-
-persist_ip_forward() {
-    log "Persisting IPv4 forwarding"
-    ${SUDO} mkdir -p /etc/sysctl.d
-    ${SUDO} tee /etc/sysctl.d/99-iamgunpoint-docker-vps.conf >/dev/null <<'EOF'
-net.ipv4.ip_forward = 1
-EOF
-    ${SUDO} sysctl --system >>"$LOG_FILE" 2>&1 || true
 }
 
 patch_bot_config() {
@@ -415,7 +408,6 @@ main() {
     install_docker_if_needed
     write_docker_enabler
     enable_docker
-    persist_ip_forward
     clone_or_update_repo "$INSTALL_DIR"
     create_requirements_if_missing "$INSTALL_DIR"
     setup_python_env "$INSTALL_DIR"
